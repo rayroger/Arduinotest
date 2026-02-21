@@ -1,9 +1,20 @@
 /**
  * ESP32-S2 Mini SNTP Clock
  *
- * Connects to a WiFi network and synchronises the system time
- * using SNTP (Simple Network Time Protocol).  The current time is
- * printed to the Serial monitor once per second.
+ * Connects to a WiFi network and synchronises the system time using SNTP.
+ * WiFi credentials and timezone settings are stored in NVS (Preferences) and
+ * can be configured via a built-in web page.
+ *
+ * First-boot / no-credentials flow:
+ *   1. The device starts a WiFi Access Point named "ESP32-Clock-Config".
+ *   2. Connect to that AP (password: "configure") and open http://192.168.4.1
+ *   3. Fill in the SSID, WiFi password, UTC offset and DST setting, then click
+ *      "Save & Restart".
+ *   4. The device restarts, connects to your network and starts syncing time.
+ *
+ * Reconfiguration:
+ *   After connecting to your network the config page is still available at
+ *   the device's IP address on port 80.
  *
  * Board : ESP32-S2 Mini (LOLIN S2 Mini)
  * Target: Arduino ESP32 core >= 2.x
@@ -16,10 +27,13 @@
 #include "esp_sntp.h"
 #include "time.h"
 #include "config.h"
+#include "settings.h"
+#include "webconfig.h"
 
 // ── Forward declarations ──────────────────────────────────────────────────────
-static void connectWiFi();
-static void initSNTP();
+static bool tryConnectWiFi(const AppSettings &s);
+static void runConfigPortal();
+static void initSNTP(const AppSettings &s);
 static void waitForTimeSync();
 static void printLocalTime();
 
@@ -38,15 +52,36 @@ void setup() {
     }
     Serial.println("\n=== ESP32-S2 Mini SNTP Clock ===");
 
-    connectWiFi();
-    initSNTP();
-    waitForTimeSync();
+    AppSettings settings;
+    bool hasCredentials = loadSettings(settings);
 
+    if (!hasCredentials || !tryConnectWiFi(settings)) {
+        // No stored credentials, or connection failed → open config portal
+        runConfigPortal();
+        // runConfigPortal() only returns if the user saved new settings;
+        // the device then restarts.
+    }
+
+    // Connected – start the config web server in STA mode so the user can
+    // reconfigure without reflashing.
+    startConfigPortal(/*apMode=*/false);
+
+    initSNTP(settings);
+    waitForTimeSync();
     Serial.println("Time synchronised successfully.");
 }
 
 // ── loop ──────────────────────────────────────────────────────────────────────
 void loop() {
+    handleConfigPortal();
+
+    // Restart as soon as the user saves new settings via the web page
+    if (configSaved()) {
+        Serial.println("New settings saved – restarting…");
+        delay(1000);
+        ESP.restart();
+    }
+
     printLocalTime();
     delay(1000);
 }
@@ -54,22 +89,22 @@ void loop() {
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Connect to the WiFi network defined in config.h.
- * Blocks until a connection is established or the device resets after
- * a 30-second timeout.
+ * Attempt to connect to WiFi using the provided settings.
+ * Returns true on success, false on timeout (30 seconds).
  */
-static void connectWiFi() {
-    Serial.printf("Connecting to WiFi SSID: %s\n", WIFI_SSID);
+static bool tryConnectWiFi(const AppSettings &s) {
+    Serial.printf("Connecting to WiFi SSID: %s\n", s.ssid.c_str());
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    WiFi.begin(s.ssid.c_str(), s.password.c_str());
 
     const unsigned long timeout = 30000UL; // 30 seconds
     const unsigned long start   = millis();
 
     while (WiFi.status() != WL_CONNECTED) {
         if (millis() - start > timeout) {
-            Serial.println("WiFi connection timed out. Restarting…");
-            ESP.restart();
+            Serial.println("\nWiFi connection timed out.");
+            WiFi.disconnect(true);
+            return false;
         }
         delay(500);
         Serial.print('.');
@@ -77,20 +112,41 @@ static void connectWiFi() {
 
     Serial.printf("\nConnected. IP address: %s\n",
                   WiFi.localIP().toString().c_str());
+    return true;
 }
 
 /**
- * Configure and start the SNTP client.
- * Uses up to three NTP servers defined in config.h.
+ * Start the AP-mode config portal and block until the user saves settings,
+ * then restart the device so the new settings take effect.
  */
-static void initSNTP() {
+static void runConfigPortal() {
+    Serial.println("Starting configuration portal…");
+    startConfigPortal(/*apMode=*/true);
+
+    while (!configSaved()) {
+        handleConfigPortal();
+        delay(10);
+    }
+
+    Serial.println("Settings saved – restarting…");
+    stopConfigPortal();
+    delay(500);
+    ESP.restart();
+}
+
+/**
+ * Configure and start the SNTP client using the timezone settings stored in
+ * the provided AppSettings.
+ */
+static void initSNTP(const AppSettings &s) {
     Serial.println("Initialising SNTP…");
 
-    // Register callback so we know when the first sync has completed
     sntp_set_time_sync_notification_cb(sntpSyncCallback);
 
-    // configTime sets the timezone and starts SNTP
-    configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC,
+    long gmtOffsetSec = (long)s.gmtOffsetHours * 3600L;
+    int  dstOffsetSec = (int)s.dstOffsetHours  * 3600;
+
+    configTime(gmtOffsetSec, dstOffsetSec,
                NTP_SERVER1, NTP_SERVER2, NTP_SERVER3);
 }
 
@@ -129,3 +185,4 @@ static void printLocalTime() {
     strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &timeInfo);
     Serial.println(buf);
 }
+
