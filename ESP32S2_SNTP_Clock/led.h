@@ -24,10 +24,11 @@
 // ── LED mode enum ─────────────────────────────────────────────────────────────
 
 enum LedMode {
-    LED_OFF,        ///< LED off (no WiFi or idle)
-    LED_BLINK_FAST, ///< Fast blink – connecting to WiFi
-    LED_BLINK_SLOW, ///< Slow blink – AP config-portal mode
-    LED_SOLID       ///< Steady on  – connected to WiFi
+    LED_OFF,             ///< LED off (no WiFi or idle)
+    LED_BLINK_FAST,      ///< Fast blink  – connecting to WiFi     (~200 ms toggle)
+    LED_BLINK_SLOW,      ///< Slow blink  – AP config-portal mode  (~500 ms toggle)
+    LED_BLINK_VERY_SLOW, ///< Very slow   – WiFi connected / OK     (~2000 ms toggle, saves power)
+    LED_SOLID            ///< Steady on   – connected to WiFi
 };
 
 // ── Module state ──────────────────────────────────────────────────────────────
@@ -73,9 +74,13 @@ inline void ledSetMode(LedMode mode) {
  * loop() iteration.  No-op for LED_SOLID and LED_OFF.
  */
 inline void ledUpdate() {
-    if (_ledMode != LED_BLINK_FAST && _ledMode != LED_BLINK_SLOW) return;
+    if (_ledMode != LED_BLINK_FAST &&
+        _ledMode != LED_BLINK_SLOW &&
+        _ledMode != LED_BLINK_VERY_SLOW) return;
 
-    unsigned int interval = (_ledMode == LED_BLINK_FAST) ? 200u : 500u;
+    unsigned int interval = (_ledMode == LED_BLINK_FAST)      ? 200u
+                          : (_ledMode == LED_BLINK_VERY_SLOW) ? 2000u
+                          :                                      500u;
     unsigned long now = millis();
     if (now - _ledLastMs >= interval) {
         _ledLastMs = now;
