@@ -33,7 +33,7 @@ static double _julianDay(int year, int month, int day) {
     int B = 2 - A + A / 4;
     return (int)(365.25 * (year + 4716))
          + (int)(30.6001 * (month + 1))
-         + day + B - 1524.5;
+         + day + B - 1524.0;
 }
 
 /**
