@@ -58,7 +58,7 @@ static String buildConfigPage(bool showNav) {
     String page = FPSTR(CONFIG_HTML);
     page.replace("%NAV%",         nav);
     page.replace("%SSID%",        s.ssid);
-    page.replace("%GMT_OPTIONS%", buildGmtOptions(s.gmtOffsetHours));
+    page.replace("%GMT_OPTIONS%", buildGmtOptions(s.gmtOffsetMinutes));
     page.replace("%DST_OPTIONS%", buildDstOptions(s.dstOffsetHours));
     page.replace("%LAT%",         latBuf);
     page.replace("%LON%",         lonBuf);
@@ -112,7 +112,7 @@ static void handleSave() {
     if (_server.hasArg("pass") && _server.arg("pass").length() > 0)
         s.password = _server.arg("pass");
     if (_server.hasArg("gmt"))
-        s.gmtOffsetHours = (int8_t)_server.arg("gmt").toInt();
+        s.gmtOffsetMinutes = (int16_t)_server.arg("gmt").toInt();
     if (_server.hasArg("dst"))
         s.dstOffsetHours = (int8_t)_server.arg("dst").toInt();
     if (_server.hasArg("lat"))
@@ -151,12 +151,16 @@ static void handleApiStatus() {
     strftime(timeBuf, sizeof(timeBuf), "%H:%M:%S",     &t);
     strftime(dateBuf, sizeof(dateBuf), "%Y-%m-%d %A",  &t);
 
-    // ── Sunrise / sunset ──────────────────────────────────────────────────────
+    // Use the UTC offset the system clock is actually applying right now.
+    // tm_gmtoff reflects the SNTP-configured timezone including any DST the
+    // OS has determined to be active, so it is always consistent with the
+    // displayed local time and avoids adding dstOffsetHours when DST is not
+    // actually in effect (e.g. Israel in February = UTC+2, not UTC+3).
     AppSettings s;
     loadSettings(s);
 
     int   riseMin   = -1, setMin = -1;
-    float gmtOffset = (float)s.gmtOffsetHours + (float)s.dstOffsetHours;
+    float gmtOffset = (float)t.tm_gmtoff / 3600.0f;
     SunTime::calcSunriseSunset(t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
                                s.latitude, s.longitude, gmtOffset,
                                riseMin, setMin);

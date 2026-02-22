@@ -10,7 +10,7 @@
  *   -------  ------  -----------------------------------------
  *   ssid     String  WiFi network name
  *   pass     String  WiFi password
- *   gmtMin   int16   UTC offset in minutes (-720 … +840), e.g. IST = 330
+ *   gmtMin   int16   UTC offset in minutes (-720 … +840), e.g. UTC+2 = 120, UTC+5:30 = 330
  *   dstOff   int8    DST offset in hours (0 or 1)
  *   lat      float   Latitude  in decimal degrees (°N, -90 … +90)
  *   lon      float   Longitude in decimal degrees (°E, -180 … +180)
@@ -24,7 +24,7 @@
 struct AppSettings {
     String  ssid;
     String  password;
-    int16_t gmtOffsetMinutes = 0;  ///< UTC offset in minutes, e.g. IST = 330 (+5 h 30 m)
+    int16_t gmtOffsetMinutes = 0;  ///< UTC offset in minutes, e.g. UTC+2 = 120, UTC+5:30 = 330
     int8_t  dstOffsetHours   = 0;  ///< DST offset in hours (0 or 1)
     float   latitude         = 0.0f; ///< Decimal degrees north (negative = south)
     float   longitude        = 0.0f; ///< Decimal degrees east  (negative = west)
