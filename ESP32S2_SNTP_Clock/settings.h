@@ -16,6 +16,7 @@
  *   lon      float   Longitude in decimal degrees (°E, -180 … +180)
  *   wEn      bool    Watch winder enabled (true/false)
  *   wCycSec  uint16  Winding cycle interval in seconds (1 … 65535)
+ *   wCyc     uint8   Winding rotations per direction per session (1 … 10)
  */
 
 #pragma once
@@ -34,6 +35,7 @@ struct AppSettings {
     // Watch winder
     bool     winderEnabled  = true;  ///< Enable the watch winder motor task
     uint16_t winderCycleSec = 20;    ///< Seconds between winding cycles (default 20 s)
+    uint8_t  winderCycles   = 1;     ///< Winding rotations per direction per session (1–10)
 };
 
 // ── NVS helpers ───────────────────────────────────────────────────────────────
@@ -54,6 +56,7 @@ inline bool loadSettings(AppSettings &s) {
     s.longitude        = _prefs.getFloat  ("lon",   0.0f);
     s.winderEnabled    = _prefs.getBool   ("wEn",   true);
     s.winderCycleSec   = _prefs.getUShort ("wCycSec", 20);
+    s.winderCycles     = (uint8_t)_prefs.getUChar("wCyc", 1);
     _prefs.end();
     return s.ssid.length() > 0;
 }
@@ -69,6 +72,7 @@ inline void saveSettings(const AppSettings &s) {
     _prefs.putFloat ("lon",    s.longitude);
     _prefs.putBool  ("wEn",    s.winderEnabled);
     _prefs.putUShort("wCycSec", s.winderCycleSec);
+    _prefs.putUChar ("wCyc",  s.winderCycles);
     _prefs.end();
 }
 
