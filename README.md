@@ -13,13 +13,28 @@ An Arduino sketch for the **ESP32-S2 Mini (LOLIN S2 Mini)** that:
 2. On first boot (or when stored credentials fail) starts a **WiFi Access Point** and serves a **configuration web page**.
 3. After configuration, connects to your network, synchronises the clock via **SNTP**, and prints the current time to Serial every second.
 4. Keeps the config web page running at the device's IP so settings can be updated at any time without reflashing.
+5. Drives an **automatic watch winder** motor on a configurable schedule, with an LM393 light sensor that stops the motor when the watch drawer is closed (dark).
 
 ### Hardware
 | Item | Details |
 |------|---------|
 | Board | ESP32-S2 Mini (LOLIN S2 Mini) |
 | Connection | USB (Serial monitor at 115200 baud) |
-| Wiring | None – USB only |
+| Motor driver | L9110 dual-channel DC motor module |
+| Watch motor | Any 3–12 V DC motor connected to the L9110 channel A |
+| Light sensor | LM393 breakout (digital output) |
+
+#### Wiring
+
+| Signal | ESP32-S2 GPIO | L9110 / LM393 pin |
+|--------|---------------|-------------------|
+| Motor A input 1 (A1A) | 3 | A-1A |
+| Motor A input 2 (A1B) | 2 | A-1B |
+| Motor B input 1 (B1A) | 8 | B-1A *(optional)* |
+| Motor B input 2 (B1B) | 9 | B-1B *(optional)* |
+| Light sensor output | 7 | LM393 DO |
+
+> All pin assignments can be changed in `config.h`.
 
 ### Software Requirements
 - [Arduino IDE](https://www.arduino.cc/en/software) 2.x **or** [PlatformIO](https://platformio.org/)
@@ -43,20 +58,51 @@ An Arduino sketch for the **ESP32-S2 Mini (LOLIN S2 Mini)** that:
 ### Reconfiguration
 After the device has connected to your network, the same web page is available at its local IP address (shown in the Serial monitor on boot). Navigate there to change any setting; the device restarts automatically after saving.
 
+### Watch Winder
+
+The watch winder task runs on a **configurable interval** and uses the following duty-cycle pattern (adapted from the reference WatchWinder sketch):
+
+| Cycle index (`n % 5`) | Motor state |
+|------------------------|-------------|
+| 0 | Off (rest) |
+| 1 | **Rotate right** (clockwise) |
+| 2 | Off (rest) |
+| 3 | **Rotate left** (counter-clockwise) |
+| 4 | Off (rest) |
+
+The **LM393 light sensor** overrides every cycle: when its output is HIGH (light path blocked, e.g. the watch drawer is closed), the motor is stopped regardless of the duty-cycle step. This prevents unnecessary running when the watch is not being wound.
+
+Both the enable/disable switch and the cycle interval (in seconds) can be changed at runtime from the **Settings** page of the web portal without reflashing.
+
 ### Files
 
 | File | Purpose |
 |------|---------|
-| `ESP32S2_SNTP_Clock.ino` | Main sketch – WiFi connection, SNTP, main loop |
-| `config.h` | Compile-time defaults (NTP servers, AP name/password) |
+| `ESP32S2_SNTP_Clock.ino` | Main sketch – WiFi connection, SNTP, task registration, main loop |
+| `config.h` | Compile-time defaults (NTP servers, AP credentials, motor & sensor pins) |
 | `settings.h` | NVS-backed persistent settings (Preferences) |
+| `scheduler.h` | Lightweight task scheduler – daily (HH:MM) and interval (millis) tasks |
+| `motor.h` | L9110 DC motor driver (`motorA`, `motorB`) |
+| `winder.h` | Watch winder duty-cycle logic + LM393 light-sensor integration |
 | `webconfig.h` | HTTP config portal (AP mode + STA mode) |
+| `html_pages.h` | HTML page templates and option-builder helpers |
+| `led.h` | Non-blocking WiFi-status LED driver |
+| `suntime.h` | Sunrise / sunset calculator (NOAA simplified algorithm) |
 
 ### AP / Portal Defaults (config.h)
 ```cpp
 #define AP_SSID     "ESP32-Clock-Config"
 #define AP_PASSWORD "configure"          // "" for open AP
 #define WEB_SERVER_PORT 80
+```
+
+### Watch Winder Defaults (config.h)
+```cpp
+#define A1A  3              // Motor A input 1
+#define A1B  2              // Motor A input 2
+#define B1A  8              // Motor B input 1
+#define B1B  9              // Motor B input 2
+#define LIGHT_SENSOR_PIN 7  // LM393 digital output
 ```
 
 ### Expected Serial Output
@@ -70,7 +116,13 @@ Initialising SNTP…
 Waiting for SNTP sync......
 Time synchronised successfully.
 2026-02-21 22:36:10
-2026-02-21 22:36:11
+[Scheduler] Running: Watch winder
+[Winder] cycle=0 light=0
+[Winder] motorA - O
+2026-02-21 22:36:30
+[Scheduler] Running: Watch winder
+[Winder] cycle=1 light=0
+[Winder] motorA - R
 ...
 ```
 

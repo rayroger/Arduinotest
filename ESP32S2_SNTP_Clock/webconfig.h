@@ -28,6 +28,7 @@
 #include "settings.h"
 #include "suntime.h"
 #include "scheduler.h"
+#include "winder.h"
 #include "html_pages.h"
 
 // ── Module state ──────────────────────────────────────────────────────────────
@@ -63,6 +64,8 @@ static String buildConfigPage(bool showNav) {
     page.replace("%DST_OPTIONS%", buildDstOptions(s.dstOffsetHours));
     page.replace("%LAT%",         latBuf);
     page.replace("%LON%",         lonBuf);
+    page.replace("%WINDER_EN_OPTIONS%", buildWinderEnOptions(s.winderEnabled));
+    page.replace("%WINDER_CYCSEC%",     String(s.winderCycleSec));
     return page;
 }
 
@@ -120,6 +123,13 @@ static void handleSave() {
         s.latitude  = _server.arg("lat").toFloat();
     if (_server.hasArg("lon"))
         s.longitude = _server.arg("lon").toFloat();
+    if (_server.hasArg("wEn"))
+        s.winderEnabled = (_server.arg("wEn") == "1");
+    if (_server.hasArg("wCycSec")) {
+        int v = _server.arg("wCycSec").toInt();
+        if (v >= 1 && v <= 65535)
+            s.winderCycleSec = (uint16_t)v;
+    }
 
     saveSettings(s);
     _server.send(200, "text/html", FPSTR(SAVED_HTML));
@@ -135,7 +145,8 @@ static void handleSave() {
  *     "date":    "YYYY-MM-DD Weekday",
  *     "sunrise": "HH:MM",   // "--:--" when unavailable
  *     "sunset":  "HH:MM",
- *     "tasks":   [{"name": "…", "sched": "HH:MM"}, …]
+ *     "tasks":   [{"name": "…", "sched": "HH:MM or /Xs"}, …],
+ *     "winder":  {"enabled": true, "cycleSec": 20, "cycles": 42}
  *   }
  */
 static void handleApiStatus() {
@@ -175,9 +186,24 @@ static void handleApiStatus() {
     const auto &tasks = _scheduler.tasks();
     for (size_t i = 0; i < tasks.size(); i++) {
         if (i > 0) tasksJson += ',';
-        char sched[6];
-        snprintf(sched, sizeof(sched), "%02u:%02u",
-                 (unsigned)tasks[i].hour, (unsigned)tasks[i].minute);
+
+        // Format schedule: "HH:MM" for daily tasks, "/Xs" (< 120 s) or "/Xm" for interval
+        String sched;
+        if (tasks[i].type == TASK_INTERVAL) {
+            uint32_t secs = tasks[i].intervalMs / 1000u;
+            char buf[16];
+            if (secs >= 120u)
+                snprintf(buf, sizeof(buf), "/%lum", (unsigned long)(secs / 60u));
+            else
+                snprintf(buf, sizeof(buf), "/%lus", (unsigned long)secs);
+            sched = buf;
+        } else {
+            char buf[6];
+            snprintf(buf, sizeof(buf), "%02u:%02u",
+                     (unsigned)tasks[i].hour, (unsigned)tasks[i].minute);
+            sched = buf;
+        }
+
         tasksJson += "{\"name\":\"";
         tasksJson += jsonEscape(tasks[i].name);
         tasksJson += "\",\"sched\":\"";
@@ -188,13 +214,17 @@ static void handleApiStatus() {
 
     // ── Assemble and send ─────────────────────────────────────────────────────
     String json;
-    json.reserve(256);
+    json.reserve(512); // ~200 bytes base + tasks array + winder object
     json  = "{\"time\":\"";    json += timeBuf;
     json += "\",\"date\":\"";    json += dateBuf;
     json += "\",\"sunrise\":\""; json += SunTime::formatMinutes(riseMin);
     json += "\",\"sunset\":\"";  json += SunTime::formatMinutes(setMin);
     json += "\",\"tasks\":";     json += tasksJson;
-    json += "}";
+    json += ",\"winder\":{\"enabled\":";
+    json += s.winderEnabled ? "true" : "false";
+    json += ",\"cycleSec\":";    json += s.winderCycleSec;
+    json += ",\"cycles\":";      json += winderCycleCount();
+    json += "}}";
 
     _server.send(200, "application/json", json);
 }
