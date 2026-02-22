@@ -21,6 +21,7 @@
  */
 
 #pragma once
+#include <time.h>
 #include <WebServer.h>
 #include <WiFi.h>
 #include "config.h"
@@ -58,7 +59,7 @@ static String buildConfigPage(bool showNav) {
     String page = FPSTR(CONFIG_HTML);
     page.replace("%NAV%",         nav);
     page.replace("%SSID%",        s.ssid);
-    page.replace("%GMT_OPTIONS%", buildGmtOptions(s.gmtOffsetHours));
+    page.replace("%GMT_OPTIONS%", buildGmtOptions(s.gmtOffsetMinutes));
     page.replace("%DST_OPTIONS%", buildDstOptions(s.dstOffsetHours));
     page.replace("%LAT%",         latBuf);
     page.replace("%LON%",         lonBuf);
@@ -112,7 +113,7 @@ static void handleSave() {
     if (_server.hasArg("pass") && _server.arg("pass").length() > 0)
         s.password = _server.arg("pass");
     if (_server.hasArg("gmt"))
-        s.gmtOffsetHours = (int8_t)_server.arg("gmt").toInt();
+        s.gmtOffsetMinutes = (int16_t)_server.arg("gmt").toInt();
     if (_server.hasArg("dst"))
         s.dstOffsetHours = (int8_t)_server.arg("dst").toInt();
     if (_server.hasArg("lat"))
@@ -151,12 +152,20 @@ static void handleApiStatus() {
     strftime(timeBuf, sizeof(timeBuf), "%H:%M:%S",     &t);
     strftime(dateBuf, sizeof(dateBuf), "%Y-%m-%d %A",  &t);
 
-    // ── Sunrise / sunset ──────────────────────────────────────────────────────
+    // Derive the UTC offset the system clock is actually applying right now.
+    // mktime() interprets a broken-out UTC time as local time, so the
+    // difference (now - mktime(gmtime(now))) equals the local UTC offset in
+    // seconds.  This is consistent with the displayed local time and works on
+    // all ESP32 toolchain versions (unlike the glibc-only tm_gmtoff field).
     AppSettings s;
     loadSettings(s);
 
+    time_t _now = time(NULL);
+    struct tm _utcTm;
+    gmtime_r(&_now, &_utcTm);
+
     int   riseMin   = -1, setMin = -1;
-    float gmtOffset = (float)s.gmtOffsetHours + (float)s.dstOffsetHours;
+    float gmtOffset = (float)(_now - (time_t)mktime(&_utcTm)) / 3600.0f;
     SunTime::calcSunriseSunset(t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
                                s.latitude, s.longitude, gmtOffset,
                                riseMin, setMin);

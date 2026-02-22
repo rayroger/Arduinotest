@@ -29,6 +29,7 @@
 #include "settings.h"
 #include "suntime.h"
 #include "scheduler.h"
+#include "led.h"
 #include "webconfig.h"
 
 // ── Forward declarations ──────────────────────────────────────────────────────
@@ -52,6 +53,7 @@ void setup() {
     while (!Serial) {
         delay(10);
     }
+    ledSetup();
     Serial.println("\n=== ESP32-S2 Mini SNTP Clock ===");
 
     AppSettings settings;
@@ -84,6 +86,16 @@ void loop() {
         Serial.println("New settings saved – restarting…");
         delay(1000);
         ESP.restart();
+    }
+
+    // Keep LED in sync with the live WiFi connection state.
+    // Only call ledSetMode() when the connection state actually changes to
+    // avoid redundant WiFi.status() overhead on every 1-second tick.
+    static bool wifiWasConnected = false; // false forces ledSetMode on the very first loop iteration
+    bool wifiIsConnected = (WiFi.status() == WL_CONNECTED);
+    if (wifiIsConnected != wifiWasConnected) {
+        wifiWasConnected = wifiIsConnected;
+        ledSetMode(wifiIsConnected ? LED_SOLID : LED_OFF);
     }
 
     _scheduler.run();
@@ -120,6 +132,8 @@ static bool tryConnectWiFi(const AppSettings &s) {
     WiFi.mode(WIFI_STA);
     WiFi.begin(s.ssid.c_str(), s.password.c_str());
 
+    ledSetMode(LED_BLINK_FAST);
+
     const unsigned long timeout = 30000UL;
     const unsigned long start   = millis();
 
@@ -127,12 +141,15 @@ static bool tryConnectWiFi(const AppSettings &s) {
         if (millis() - start > timeout) {
             Serial.println("\nWiFi connection timed out.");
             WiFi.disconnect(true);
+            ledSetMode(LED_OFF);
             return false;
         }
         delay(500);
+        ledUpdate();
         Serial.print('.');
     }
 
+    ledSetMode(LED_SOLID);
     Serial.printf("\nConnected. IP address: %s\n",
                   WiFi.localIP().toString().c_str());
     return true;
@@ -145,9 +162,11 @@ static bool tryConnectWiFi(const AppSettings &s) {
 static void runConfigPortal() {
     Serial.println("Starting configuration portal…");
     startConfigPortal(/*apMode=*/true);
+    ledSetMode(LED_BLINK_SLOW);
 
     while (!configSaved()) {
         handleConfigPortal();
+        ledUpdate();
         delay(10);
     }
 
@@ -168,7 +187,7 @@ static void initSNTP(const AppSettings &s) {
 
     sntp_set_time_sync_notification_cb(sntpSyncCallback);
 
-    long gmtOffsetSec = (long)s.gmtOffsetHours * 3600L;
+    long gmtOffsetSec = (long)s.gmtOffsetMinutes * 60L;
     int  dstOffsetSec = (int)s.dstOffsetHours  * 3600;
 
     configTime(gmtOffsetSec, dstOffsetSec,

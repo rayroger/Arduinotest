@@ -230,17 +230,27 @@ static const char SAVED_HTML[] PROGMEM = R"html(
 
 // ── Dropdown option builders ───────────────────────────────────────────────────
 
-/** Build <option> elements for the UTC-offset <select> box. */
-static String buildGmtOptions(int8_t current) {
+/** Build <option> elements for the UTC-offset <select> box (30-minute steps). */
+static String buildGmtOptions(int16_t currentMinutes) {
     String out;
-    for (int8_t h = -12; h <= 14; h++) {
+    for (int16_t m = -720; m <= 840; m += 30) {
+        int absM = abs((int)m);
+        int h    = absM / 60;
+        int min  = absM % 60;
+        char label[16];
+        if (m < 0) {
+            if (min == 0) snprintf(label, sizeof(label), "UTC-%d", h);
+            else          snprintf(label, sizeof(label), "UTC-%d:%02d", h, min);
+        } else {
+            if (min == 0) snprintf(label, sizeof(label), "UTC+%d", h);
+            else          snprintf(label, sizeof(label), "UTC+%d:%02d", h, min);
+        }
         out += "<option value=\"";
-        out += h;
+        out += m;
         out += "\"";
-        if (h == current) out += " selected";
-        out += ">UTC";
-        if (h >= 0) out += "+";
-        out += h;
+        if (m == currentMinutes) out += " selected";
+        out += ">";
+        out += label;
         out += "</option>\n";
     }
     return out;
