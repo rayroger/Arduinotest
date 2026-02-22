@@ -1,24 +1,23 @@
 /**
  * webconfig.h
  *
- * Provides a captive-portal-style web page that lets the user configure:
- *   - WiFi SSID and password
- *   - UTC (GMT) offset in hours
- *   - DST offset in hours
+ * HTTP web server providing:
  *
- * Usage
- * -----
- *   startConfigPortal();          // call once to start AP + web server
- *   handleConfigPortal();         // call every loop() iteration
- *   bool done = configSaved();    // true after the user submits the form
+ *   GET  /            (STA mode) Live dashboard: local time, sun times, tasks.
+ *   GET  /config      (STA mode) Settings form for WiFi / timezone / location.
+ *   GET  /            (AP  mode) Settings form (captive-portal, no nav bar).
+ *   POST /save        Persist submitted settings and show a confirmation page.
+ *   GET  /api/status  JSON status used by the dashboard's 1-second fetch loop.
  *
- * After configSaved() returns true the caller should:
- *   1. Read the new settings via loadSettings().
- *   2. Stop the portal with stopConfigPortal().
- *   3. Reconnect to WiFi using the new credentials.
+ * In AP mode every unrecognised URL is redirected to "/" so that mobile
+ * devices trigger the captive-portal prompt automatically.
  *
- * The portal is also available while in STA mode so the user can
- * reconfigure the device by navigating to its IP address.
+ * Public API
+ * ----------
+ *   startConfigPortal(bool apMode);   // call once in setup()
+ *   handleConfigPortal();             // call every loop() iteration
+ *   bool configSaved();               // true after the user submits the form
+ *   stopConfigPortal();               // optional clean shutdown
  */
 
 #pragma once
@@ -26,205 +25,230 @@
 #include <WiFi.h>
 #include "config.h"
 #include "settings.h"
+#include "suntime.h"
+#include "scheduler.h"
+#include "html_pages.h"
 
-static WebServer  _server(WEB_SERVER_PORT);
-static bool       _configSaved = false;
+// ── Module state ──────────────────────────────────────────────────────────────
 
-// ── HTML helpers ──────────────────────────────────────────────────────────────
+static WebServer _server(WEB_SERVER_PORT);
+static bool      _configSaved = false;
 
-static const char CONFIG_HTML[] PROGMEM = R"rawhtml(
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ESP32 Clock Setup</title>
-<style>
-  body{font-family:Arial,sans-serif;background:#f0f2f5;display:flex;
-       justify-content:center;align-items:center;min-height:100vh;margin:0}
-  .card{background:#fff;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,.12);
-        padding:2rem;width:min(360px,90vw)}
-  h2{margin:0 0 1.4rem;color:#333;text-align:center}
-  label{display:block;margin-bottom:.3rem;font-size:.85rem;color:#555}
-  input,select{width:100%;box-sizing:border-box;padding:.55rem .7rem;
-               border:1px solid #ccc;border-radius:6px;font-size:1rem;
-               margin-bottom:1rem}
-  input:focus,select:focus{outline:none;border-color:#4a90e2}
-  button{width:100%;padding:.7rem;background:#4a90e2;color:#fff;border:none;
-         border-radius:6px;font-size:1rem;cursor:pointer}
-  button:hover{background:#3a80d2}
-  .note{font-size:.75rem;color:#888;margin-top:1rem;text-align:center}
-</style>
-</head>
-<body>
-<div class="card">
-  <h2>&#x1F552; Clock Setup</h2>
-  <form method="POST" action="/save">
-    <label for="ssid">WiFi SSID</label>
-    <input id="ssid" name="ssid" type="text"
-           placeholder="Network name" value="%SSID%" required>
+// ── Internal helpers ──────────────────────────────────────────────────────────
 
-    <label for="pass">WiFi Password</label>
-    <input id="pass" name="pass" type="password"
-           placeholder="Leave blank to keep current" value="">
+/**
+ * Render the settings form, substituting all template placeholders.
+ * @param showNav  When true, injects the dashboard / settings navigation bar.
+ */
+static String buildConfigPage(bool showNav) {
+    AppSettings s;
+    loadSettings(s);
 
-    <label for="gmt">UTC Offset (hours)</label>
-    <select id="gmt" name="gmt">
-      %GMT_OPTIONS%
-    </select>
+    const String nav = showNav
+        ? "<nav>"
+          "<a href=\"/\">&#x1F4CA; Dashboard</a>"
+          "<a href=\"/config\" class=\"active\">&#x2699;&#xFE0F; Settings</a>"
+          "</nav>"
+        : "";
 
-    <label for="dst">Daylight Saving Time</label>
-    <select id="dst" name="dst">
-      %DST_OPTIONS%
-    </select>
+    char latBuf[12], lonBuf[12];
+    snprintf(latBuf, sizeof(latBuf), "%.4f", (double)s.latitude);
+    snprintf(lonBuf, sizeof(lonBuf), "%.4f", (double)s.longitude);
 
-    <button type="submit">Save &amp; Restart</button>
-  </form>
-  <p class="note">The device will restart after saving.</p>
-</div>
-</body>
-</html>
-)rawhtml";
-
-static const char SAVED_HTML[] PROGMEM = R"rawhtml(
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Saved</title>
-<style>
-  body{font-family:Arial,sans-serif;background:#f0f2f5;display:flex;
-       justify-content:center;align-items:center;min-height:100vh;margin:0}
-  .card{background:#fff;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,.12);
-        padding:2rem;width:min(360px,90vw);text-align:center}
-  h2{color:#4caf50}p{color:#555}
-</style>
-</head>
-<body>
-<div class="card">
-  <h2>&#x2713; Settings Saved</h2>
-  <p>The device is restarting…</p>
-</div>
-</body>
-</html>
-)rawhtml";
-
-// ── Build the option lists for the selects ────────────────────────────────────
-
-static String buildGmtOptions(int8_t current) {
-    String out;
-    for (int8_t h = -12; h <= 14; h++) {
-        out += "<option value=\"";
-        out += h;
-        out += "\"";
-        if (h == current) out += " selected";
-        out += ">UTC";
-        if (h >= 0) out += "+";
-        out += h;
-        out += "</option>\n";
-    }
-    return out;
+    String page = FPSTR(CONFIG_HTML);
+    page.replace("%NAV%",         nav);
+    page.replace("%SSID%",        s.ssid);
+    page.replace("%GMT_OPTIONS%", buildGmtOptions(s.gmtOffsetHours));
+    page.replace("%DST_OPTIONS%", buildDstOptions(s.dstOffsetHours));
+    page.replace("%LAT%",         latBuf);
+    page.replace("%LON%",         lonBuf);
+    return page;
 }
 
-static String buildDstOptions(int8_t current) {
+/**
+ * Escape a string so it is safe to embed as a JSON string value.
+ * Handles the characters that must be escaped per RFC 8259.
+ */
+static String jsonEscape(const String &s) {
     String out;
-    const char *labels[] = { "Disabled (0 h)", "Enabled (+1 h)" };
-    for (int8_t d = 0; d <= 1; d++) {
-        out += "<option value=\"";
-        out += d;
-        out += "\"";
-        if (d == current) out += " selected";
-        out += ">";
-        out += labels[d];
-        out += "</option>\n";
+    out.reserve(s.length());
+    for (char c : s) {
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:   out += c;      break;
+        }
     }
     return out;
 }
 
 // ── Request handlers ──────────────────────────────────────────────────────────
 
-static void handleConfigRoot() {
-    AppSettings current;
-    loadSettings(current);
-
-    String page = FPSTR(CONFIG_HTML);
-    page.replace("%SSID%",        current.ssid);
-    page.replace("%GMT_OPTIONS%", buildGmtOptions(current.gmtOffsetHours));
-    page.replace("%DST_OPTIONS%", buildDstOptions(current.dstOffsetHours));
-
-    _server.send(200, "text/html", page);
+/** GET /  (STA mode) – serve the live dashboard page. */
+static void handleDashboard() {
+    _server.send(200, "text/html", FPSTR(DASHBOARD_HTML));
 }
 
-static void handleConfigSave() {
-    AppSettings s;
-    loadSettings(s);   // keep existing values as defaults
+/** GET /config  (STA mode) – serve the settings form with navigation. */
+static void handleConfigPage() {
+    _server.send(200, "text/html", buildConfigPage(/*showNav=*/true));
+}
 
-    if (_server.hasArg("ssid") && _server.arg("ssid").length() > 0) {
+/** GET /  (AP mode) – serve the settings form without navigation. */
+static void handleApConfigPage() {
+    _server.send(200, "text/html", buildConfigPage(/*showNav=*/false));
+}
+
+/** POST /save – validate, persist and confirm the submitted settings. */
+static void handleSave() {
+    AppSettings s;
+    loadSettings(s);   // start from stored values so omitted fields are kept
+
+    if (_server.hasArg("ssid") && _server.arg("ssid").length() > 0)
         s.ssid = _server.arg("ssid");
-    }
-    // Only update password when a non-empty value is submitted
-    if (_server.hasArg("pass") && _server.arg("pass").length() > 0) {
+    if (_server.hasArg("pass") && _server.arg("pass").length() > 0)
         s.password = _server.arg("pass");
-    }
-    if (_server.hasArg("gmt")) {
+    if (_server.hasArg("gmt"))
         s.gmtOffsetHours = (int8_t)_server.arg("gmt").toInt();
-    }
-    if (_server.hasArg("dst")) {
+    if (_server.hasArg("dst"))
         s.dstOffsetHours = (int8_t)_server.arg("dst").toInt();
-    }
+    if (_server.hasArg("lat"))
+        s.latitude  = _server.arg("lat").toFloat();
+    if (_server.hasArg("lon"))
+        s.longitude = _server.arg("lon").toFloat();
 
     saveSettings(s);
-
     _server.send(200, "text/html", FPSTR(SAVED_HTML));
     _configSaved = true;
+}
+
+/**
+ * GET /api/status – JSON payload consumed by the dashboard every second.
+ *
+ * Response shape:
+ *   {
+ *     "time":    "HH:MM:SS",
+ *     "date":    "YYYY-MM-DD Weekday",
+ *     "sunrise": "HH:MM",   // "--:--" when unavailable
+ *     "sunset":  "HH:MM",
+ *     "tasks":   [{"name": "…", "sched": "HH:MM"}, …]
+ *   }
+ */
+static void handleApiStatus() {
+    struct tm t;
+    if (!getLocalTime(&t)) {
+        _server.send(503, "application/json",
+                     "{\"error\":\"Time not yet available\"}");
+        return;
+    }
+
+    // ── Formatted time and date ───────────────────────────────────────────────
+    char timeBuf[9];   // "HH:MM:SS\0"
+    char dateBuf[32];  // "YYYY-MM-DD Weekday\0"
+    strftime(timeBuf, sizeof(timeBuf), "%H:%M:%S",     &t);
+    strftime(dateBuf, sizeof(dateBuf), "%Y-%m-%d %A",  &t);
+
+    // ── Sunrise / sunset ──────────────────────────────────────────────────────
+    AppSettings s;
+    loadSettings(s);
+
+    int   riseMin   = -1, setMin = -1;
+    float gmtOffset = (float)s.gmtOffsetHours + (float)s.dstOffsetHours;
+    SunTime::calcSunriseSunset(t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+                               s.latitude, s.longitude, gmtOffset,
+                               riseMin, setMin);
+
+    // ── Task list ─────────────────────────────────────────────────────────────
+    String tasksJson = "[";
+    const auto &tasks = _scheduler.tasks();
+    for (size_t i = 0; i < tasks.size(); i++) {
+        if (i > 0) tasksJson += ',';
+        char sched[6];
+        snprintf(sched, sizeof(sched), "%02u:%02u",
+                 (unsigned)tasks[i].hour, (unsigned)tasks[i].minute);
+        tasksJson += "{\"name\":\"";
+        tasksJson += jsonEscape(tasks[i].name);
+        tasksJson += "\",\"sched\":\"";
+        tasksJson += sched;
+        tasksJson += "\"}";
+    }
+    tasksJson += "]";
+
+    // ── Assemble and send ─────────────────────────────────────────────────────
+    String json;
+    json.reserve(256);
+    json  = "{\"time\":\"";    json += timeBuf;
+    json += "\",\"date\":\"";    json += dateBuf;
+    json += "\",\"sunrise\":\""; json += SunTime::formatMinutes(riseMin);
+    json += "\",\"sunset\":\"";  json += SunTime::formatMinutes(setMin);
+    json += "\",\"tasks\":";     json += tasksJson;
+    json += "}";
+
+    _server.send(200, "application/json", json);
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * Start the configuration web server.
- * In AP mode the device creates its own WiFi network; pass apMode=true.
- * In STA mode the server simply listens on the device's existing IP.
+ * Start the configuration web server and register URL routes.
+ *
+ * @param apMode  true  → device acts as an Access Point; the root URL serves
+ *                        the settings form (captive-portal behaviour).
+ *                false → device is already on a network; the root URL serves
+ *                        the live dashboard.
  */
 inline void startConfigPortal(bool apMode = true) {
+    _configSaved = false;
+
     if (apMode) {
         WiFi.mode(WIFI_AP);
-        if (strlen(AP_PASSWORD) >= 8) {
+        if (strlen(AP_PASSWORD) >= 8)
             WiFi.softAP(AP_SSID, AP_PASSWORD);
-        } else {
+        else
             WiFi.softAP(AP_SSID);
-        }
+
         Serial.printf("Config portal: connect to WiFi \"%s\" (pass: \"%s\")"
                       " then open http://192.168.4.1\n",
                       AP_SSID, AP_PASSWORD);
+
+        _server.on("/",     HTTP_GET,  handleApConfigPage);
+        _server.on("/save", HTTP_POST, handleSave);
+        _server.onNotFound([]() {
+            // Redirect every unknown URL to "/" for captive-portal detection.
+            _server.sendHeader("Location", "/", /*first=*/true);
+            _server.send(302, "text/plain", "");
+        });
     } else {
-        Serial.printf("Config portal available at http://%s\n",
+        Serial.printf("Web portal available at http://%s\n",
                       WiFi.localIP().toString().c_str());
+
+        _server.on("/",           HTTP_GET,  handleDashboard);
+        _server.on("/config",     HTTP_GET,  handleConfigPage);
+        _server.on("/save",       HTTP_POST, handleSave);
+        _server.on("/api/status", HTTP_GET,  handleApiStatus);
+        _server.onNotFound([]() {
+            _server.sendHeader("Location", "/", /*first=*/true);
+            _server.send(302, "text/plain", "");
+        });
     }
 
-    _configSaved = false;
-    _server.on("/",      HTTP_GET,  handleConfigRoot);
-    _server.on("/save",  HTTP_POST, handleConfigSave);
-    _server.onNotFound([]() {
-        // Redirect everything else to the config page (captive-portal behaviour)
-        _server.sendHeader("Location", "/", /*first=*/true);
-        _server.send(302, "text/plain", "");
-    });
     _server.begin();
 }
 
-/** Must be called from loop() to process incoming HTTP requests. */
+/** Process pending HTTP requests.  Must be called from loop(). */
 inline void handleConfigPortal() {
     _server.handleClient();
 }
 
-/** Returns true once the user has submitted the form and settings are saved. */
+/** Returns true once the user has submitted and saved the settings form. */
 inline bool configSaved() {
     return _configSaved;
 }
 
-/** Stop the web server. */
+/** Shut down the web server (e.g. just before restarting). */
 inline void stopConfigPortal() {
     _server.stop();
 }
