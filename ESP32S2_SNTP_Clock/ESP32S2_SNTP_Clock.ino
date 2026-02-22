@@ -2,24 +2,23 @@
  * ESP32-S2 Mini SNTP Clock
  *
  * Connects to a WiFi network and synchronises the system time using SNTP.
- * WiFi credentials and timezone settings are stored in NVS (Preferences) and
- * can be configured via a built-in web page.
+ * WiFi credentials, timezone, and location settings are stored in NVS
+ * (Preferences) and can be configured via a built-in web portal.
  *
  * First-boot / no-credentials flow:
  *   1. The device starts a WiFi Access Point named "ESP32-Clock-Config".
  *   2. Connect to that AP (password: "configure") and open http://192.168.4.1
- *   3. Fill in the SSID, WiFi password, UTC offset and DST setting, then click
- *      "Save & Restart".
+ *   3. Fill in the SSID, WiFi password, UTC offset, DST setting, and your
+ *      latitude / longitude, then click "Save & Restart".
  *   4. The device restarts, connects to your network and starts syncing time.
  *
- * Reconfiguration:
- *   After connecting to your network the config page is still available at
- *   the device's IP address on port 80.
+ * Once connected, the web portal is available at the device's IP address:
+ *   /            – Live dashboard: local time, sunrise/sunset, scheduled tasks.
+ *   /config      – Settings form (WiFi, timezone, location).
+ *   /api/status  – JSON status endpoint (consumed by the dashboard page).
  *
  * Board : ESP32-S2 Mini (LOLIN S2 Mini)
  * Target: Arduino ESP32 core >= 2.x
- *
- * Wiring: none – only USB / Serial is required.
  */
 
 #include <Arduino.h>
@@ -28,6 +27,8 @@
 #include "time.h"
 #include "config.h"
 #include "settings.h"
+#include "suntime.h"
+#include "scheduler.h"
 #include "webconfig.h"
 
 // ── Forward declarations ──────────────────────────────────────────────────────
@@ -36,6 +37,7 @@ static void runConfigPortal();
 static void initSNTP(const AppSettings &s);
 static void waitForTimeSync();
 static void printLocalTime();
+static void registerTasks();
 
 // ── SNTP sync callback ────────────────────────────────────────────────────────
 static volatile bool timeSynced = false;
@@ -62,42 +64,63 @@ void setup() {
         // the device then restarts.
     }
 
-    // Connected – start the config web server in STA mode so the user can
-    // reconfigure without reflashing.
+    // Connected – start the web portal in STA mode (dashboard + settings).
     startConfigPortal(/*apMode=*/false);
 
     initSNTP(settings);
     waitForTimeSync();
     Serial.println("Time synchronised successfully.");
+
+    // Register daily scheduled tasks.
+    registerTasks();
 }
 
 // ── loop ──────────────────────────────────────────────────────────────────────
 void loop() {
     handleConfigPortal();
 
-    // Restart as soon as the user saves new settings via the web page
+    // Restart as soon as the user saves new settings via the web page.
     if (configSaved()) {
         Serial.println("New settings saved – restarting…");
         delay(1000);
         ESP.restart();
     }
 
+    _scheduler.run();
     printLocalTime();
     delay(1000);
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+// ── Task registration ─────────────────────────────────────────────────────────
+
+/**
+ * Register all scheduled tasks here.
+ * Each task fires once per day at the specified local time.
+ * Add, remove, or modify tasks freely – they are displayed on the dashboard.
+ */
+static void registerTasks() {
+    _scheduler.addTask("Noon time-check", 12, 0, []() {
+        Serial.println("[Task] Noon – daily time check.");
+        printLocalTime();
+    });
+
+    _scheduler.addTask("Midnight rollover", 0, 0, []() {
+        Serial.println("[Task] Midnight – new day started.");
+    });
+}
+
+// ── WiFi ──────────────────────────────────────────────────────────────────────
 
 /**
  * Attempt to connect to WiFi using the provided settings.
- * Returns true on success, false on timeout (30 seconds).
+ * @return true on success, false on timeout (30 seconds).
  */
 static bool tryConnectWiFi(const AppSettings &s) {
     Serial.printf("Connecting to WiFi SSID: %s\n", s.ssid.c_str());
     WiFi.mode(WIFI_STA);
     WiFi.begin(s.ssid.c_str(), s.password.c_str());
 
-    const unsigned long timeout = 30000UL; // 30 seconds
+    const unsigned long timeout = 30000UL;
     const unsigned long start   = millis();
 
     while (WiFi.status() != WL_CONNECTED) {
@@ -134,8 +157,10 @@ static void runConfigPortal() {
     ESP.restart();
 }
 
+// ── SNTP ──────────────────────────────────────────────────────────────────────
+
 /**
- * Configure and start the SNTP client using the timezone settings stored in
+ * Configure and start the SNTP client using the timezone settings from
  * the provided AppSettings.
  */
 static void initSNTP(const AppSettings &s) {
@@ -156,7 +181,7 @@ static void initSNTP(const AppSettings &s) {
  */
 static void waitForTimeSync() {
     Serial.print("Waiting for SNTP sync");
-    const unsigned long timeout = 10000UL; // 10 seconds
+    const unsigned long timeout = 10000UL;
     const unsigned long start   = millis();
 
     while (!timeSynced) {
@@ -170,9 +195,11 @@ static void waitForTimeSync() {
     Serial.println();
 }
 
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
 /**
- * Read the current local time and print it to Serial in a human-readable
- * format.  Prints a warning if the time has not yet been set.
+ * Read the current local time and print it to Serial in ISO-8601 format.
+ * Prints a warning if the time has not yet been set.
  */
 static void printLocalTime() {
     struct tm timeInfo;

@@ -105,7 +105,7 @@ inline bool calcSunriseSunset(int year, int month, int day,
     auto jdToLocalMin = [&](double jd) -> int {
         double frac   = jd - floor(jd);
         double utcMin = fmod((frac + 0.5) * 1440.0, 1440.0);
-        int local = (int)(utcMin + (double)gmtOffset * 60.0 + 0.5);
+        int local = (int)(utcMin + (double)gmtOffset * 60.0 + 0.5); // +0.5 rounds to nearest minute
         return ((local % 1440) + 1440) % 1440;
     };
 
