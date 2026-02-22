@@ -152,20 +152,12 @@ static void handleApiStatus() {
     strftime(timeBuf, sizeof(timeBuf), "%H:%M:%S",     &t);
     strftime(dateBuf, sizeof(dateBuf), "%Y-%m-%d %A",  &t);
 
-    // Derive the UTC offset the system clock is actually applying right now.
-    // mktime() interprets a broken-out UTC time as local time, so the
-    // difference (now - mktime(gmtime(now))) equals the local UTC offset in
-    // seconds.  This is consistent with the displayed local time and works on
-    // all ESP32 toolchain versions (unlike the glibc-only tm_gmtoff field).
+    // Use the stored UTC offset (including DST) directly for sunrise/sunset.
     AppSettings s;
     loadSettings(s);
 
-    time_t _now = time(NULL);
-    struct tm _utcTm;
-    gmtime_r(&_now, &_utcTm);
-
     int   riseMin   = -1, setMin = -1;
-    float gmtOffset = (float)(_now - (time_t)mktime(&_utcTm)) / 3600.0f;
+    float gmtOffset = (float)(s.gmtOffsetMinutes + (int)s.dstOffsetHours * 60) / 60.0f;
     SunTime::calcSunriseSunset(t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
                                s.latitude, s.longitude, gmtOffset,
                                riseMin, setMin);

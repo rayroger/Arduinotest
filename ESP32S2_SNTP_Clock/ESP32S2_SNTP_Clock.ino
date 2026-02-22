@@ -95,8 +95,9 @@ void loop() {
     bool wifiIsConnected = (WiFi.status() == WL_CONNECTED);
     if (wifiIsConnected != wifiWasConnected) {
         wifiWasConnected = wifiIsConnected;
-        ledSetMode(wifiIsConnected ? LED_SOLID : LED_OFF);
+        ledSetMode(wifiIsConnected ? LED_BLINK_VERY_SLOW : LED_OFF);
     }
+    ledUpdate();
 
     _scheduler.run();
     printLocalTime();
