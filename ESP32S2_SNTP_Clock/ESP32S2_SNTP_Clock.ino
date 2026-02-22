@@ -168,7 +168,7 @@ static void initSNTP(const AppSettings &s) {
 
     sntp_set_time_sync_notification_cb(sntpSyncCallback);
 
-    long gmtOffsetSec = (long)s.gmtOffsetHours * 3600L;
+    long gmtOffsetSec = (long)s.gmtOffsetMinutes * 60L;
     int  dstOffsetSec = (int)s.dstOffsetHours  * 3600;
 
     configTime(gmtOffsetSec, dstOffsetSec,
