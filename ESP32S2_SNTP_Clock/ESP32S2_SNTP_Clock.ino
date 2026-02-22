@@ -30,6 +30,7 @@
 #include "suntime.h"
 #include "scheduler.h"
 #include "led.h"
+#include "winder.h"
 #include "webconfig.h"
 
 // ── Forward declarations ──────────────────────────────────────────────────────
@@ -58,6 +59,8 @@ void setup() {
 
     AppSettings settings;
     bool hasCredentials = loadSettings(settings);
+
+    winderSetup();
 
     if (!hasCredentials || !tryConnectWiFi(settings)) {
         // No stored credentials, or connection failed → open config portal
@@ -120,6 +123,17 @@ static void registerTasks() {
     _scheduler.addTask("Midnight rollover", 0, 0, []() {
         Serial.println("[Task] Midnight – new day started.");
     });
+
+    // Watch winder interval task – fires every winderCycleSec seconds.
+    // winderCycle() reads the LM393 light sensor and applies the
+    // R / off / L / off / off duty-cycle pattern via the L9110 motor driver.
+    AppSettings s;
+    loadSettings(s);
+    if (s.winderEnabled) {
+        _scheduler.addIntervalTask("Watch winder",
+                                   (uint32_t)s.winderCycleSec * 1000UL,
+                                   winderCycle);
+    }
 }
 
 // ── WiFi ──────────────────────────────────────────────────────────────────────

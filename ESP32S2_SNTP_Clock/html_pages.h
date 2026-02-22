@@ -14,6 +14,8 @@
  *   %DST_OPTIONS%  – <option> elements for the DST <select>
  *   %LAT%          – Stored latitude  (decimal degrees)
  *   %LON%          – Stored longitude (decimal degrees)
+ *   %WINDER_EN_OPTIONS%  – <option> elements for winder enable <select>
+ *   %WINDER_CYCSEC%      – Stored winder cycle interval (seconds)
  */
 
 #pragma once
@@ -88,9 +90,18 @@ static const char DASHBOARD_HTML[] PROGMEM = R"html(
   <div class="card">
     <h2>&#x23F0; Scheduled Tasks</h2>
     <table>
-      <thead><tr><th>Time</th><th>Task</th></tr></thead>
+      <thead><tr><th>Schedule</th><th>Task</th></tr></thead>
       <tbody id="tbdy">
         <tr><td colspan="2" class="empty">No tasks scheduled</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h2>&#x231B; Watch Winder</h2>
+    <table>
+      <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+      <tbody id="wbdy">
+        <tr><td colspan="2" class="empty">Loading&hellip;</td></tr>
       </tbody>
     </table>
   </div>
@@ -111,6 +122,14 @@ function refresh() {
             return '<tr><td>' + t.sched + '</td><td>' + t.name + '</td></tr>';
           })
           .join('');
+      }
+      var wb = document.getElementById('wbdy');
+      if (d.winder) {
+        var w = d.winder;
+        wb.innerHTML =
+          '<tr><td>Status</td><td>' + (w.enabled ? '&#x2705; Enabled' : '&#x26D4; Disabled') + '</td></tr>' +
+          '<tr><td>Cycle&nbsp;interval</td><td>' + w.cycleSec + ' s</td></tr>' +
+          '<tr><td>Cycles&nbsp;run</td><td>' + w.cycles + '</td></tr>';
       }
     })
     .catch(function() {});
@@ -195,6 +214,15 @@ static const char CONFIG_HTML[] PROGMEM = R"html(
       </div>
     </fieldset>
 
+    <fieldset>
+      <legend>Watch Winder</legend>
+      <label for="wEn">Winder motor</label>
+      <select id="wEn" name="wEn">%WINDER_EN_OPTIONS%</select>
+      <label for="wCycSec">Cycle interval (seconds)</label>
+      <input id="wCycSec" name="wCycSec" type="number" min="1" max="65535"
+             value="%WINDER_CYCSEC%" placeholder="e.g. 20">
+    </fieldset>
+
     <button type="submit">Save &amp; Restart</button>
   </form>
   <p class="note">The device will restart after saving.</p>
@@ -269,5 +297,17 @@ static String buildDstOptions(int8_t current) {
         out += labels[d];
         out += "</option>\n";
     }
+    return out;
+}
+
+/** Build <option> elements for the watch-winder enable <select> box. */
+static String buildWinderEnOptions(bool enabled) {
+    String out;
+    out += "<option value=\"1\"";
+    if ( enabled) out += " selected";
+    out += ">Enabled</option>\n";
+    out += "<option value=\"0\"";
+    if (!enabled) out += " selected";
+    out += ">Disabled</option>\n";
     return out;
 }

@@ -14,6 +14,8 @@
  *   dstOff   int8    DST offset in hours (0 or 1)
  *   lat      float   Latitude  in decimal degrees (°N, -90 … +90)
  *   lon      float   Longitude in decimal degrees (°E, -180 … +180)
+ *   wEn      bool    Watch winder enabled (true/false)
+ *   wCycSec  uint16  Winding cycle interval in seconds (1 … 65535)
  */
 
 #pragma once
@@ -28,6 +30,10 @@ struct AppSettings {
     int8_t  dstOffsetHours   = 0;  ///< DST offset in hours (0 or 1)
     float   latitude         = 0.0f; ///< Decimal degrees north (negative = south)
     float   longitude        = 0.0f; ///< Decimal degrees east  (negative = west)
+
+    // Watch winder
+    bool     winderEnabled  = true;  ///< Enable the watch winder motor task
+    uint16_t winderCycleSec = 20;    ///< Seconds between winding cycles (default 20 s)
 };
 
 // ── NVS helpers ───────────────────────────────────────────────────────────────
@@ -46,6 +52,8 @@ inline bool loadSettings(AppSettings &s) {
     s.dstOffsetHours   = (int8_t)_prefs.getChar ("dstOff", 0);
     s.latitude         = _prefs.getFloat  ("lat",   0.0f);
     s.longitude        = _prefs.getFloat  ("lon",   0.0f);
+    s.winderEnabled    = _prefs.getBool   ("wEn",   true);
+    s.winderCycleSec   = _prefs.getUShort ("wCycSec", 20);
     _prefs.end();
     return s.ssid.length() > 0;
 }
@@ -59,6 +67,8 @@ inline void saveSettings(const AppSettings &s) {
     _prefs.putChar  ("dstOff", (int8_t)s.dstOffsetHours);
     _prefs.putFloat ("lat",    s.latitude);
     _prefs.putFloat ("lon",    s.longitude);
+    _prefs.putBool  ("wEn",    s.winderEnabled);
+    _prefs.putUShort("wCycSec", s.winderCycleSec);
     _prefs.end();
 }
 
