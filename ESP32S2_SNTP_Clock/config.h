@@ -11,3 +11,6 @@
 
 // TCP port the configuration web server listens on
 #define WEB_SERVER_PORT 80
+
+// Built-in blue LED on the LOLIN S2 Mini (active HIGH)
+#define LED_PIN 15
