@@ -16,6 +16,7 @@
  *   %LON%          – Stored longitude (decimal degrees)
  *   %WINDER_EN_OPTIONS%  – <option> elements for winder enable <select>
  *   %WINDER_CYCSEC%      – Stored winder cycle interval (seconds)
+ *   %WINDER_CYCLES%      – Stored winding rotations per direction (1–10)
  */
 
 #pragma once
@@ -126,9 +127,15 @@ function refresh() {
       var wb = document.getElementById('wbdy');
       if (d.winder) {
         var w = d.winder;
+        var statusColor = {'RUN_CW':'#4caf50','RUN_CCW':'#2196f3','PAUSE':'#ff9800','DARK':'#9e9e9e'}[w.status] || '#eee';
+        var dirIcon = w.status === 'RUN_CW'  ? '&#x21BB;' :
+                      w.status === 'RUN_CCW' ? '&#x21BA;' :
+                      w.status === 'DARK'    ? '&#x1F319;' : '&#x23F8;';
         wb.innerHTML =
           '<tr><td>Status</td><td>' + (w.enabled ? '&#x2705; Enabled' : '&#x26D4; Disabled') + '</td></tr>' +
+          '<tr><td>Motor</td><td style="color:' + statusColor + ';font-weight:bold">' + dirIcon + ' ' + (w.status || 'PAUSE') + '</td></tr>' +
           '<tr><td>Cycle&nbsp;interval</td><td>' + w.cycleSec + ' s</td></tr>' +
+          '<tr><td>Rotations/dir</td><td>' + (w.cycles_per_dir || 1) + '</td></tr>' +
           '<tr><td>Cycles&nbsp;run</td><td>' + w.cycles + '</td></tr>';
       }
     })
@@ -221,6 +228,9 @@ static const char CONFIG_HTML[] PROGMEM = R"html(
       <label for="wCycSec">Cycle interval (seconds)</label>
       <input id="wCycSec" name="wCycSec" type="number" min="1" max="65535"
              value="%WINDER_CYCSEC%" placeholder="e.g. 20">
+      <label for="wCyc">Winding rotations per direction (1&ndash;10)</label>
+      <input id="wCyc" name="wCyc" type="number" min="1" max="10"
+             value="%WINDER_CYCLES%" placeholder="e.g. 1">
     </fieldset>
 
     <button type="submit">Save &amp; Restart</button>

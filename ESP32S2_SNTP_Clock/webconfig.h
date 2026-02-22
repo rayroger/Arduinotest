@@ -66,6 +66,7 @@ static String buildConfigPage(bool showNav) {
     page.replace("%LON%",         lonBuf);
     page.replace("%WINDER_EN_OPTIONS%", buildWinderEnOptions(s.winderEnabled));
     page.replace("%WINDER_CYCSEC%",     String(s.winderCycleSec));
+    page.replace("%WINDER_CYCLES%",     String(s.winderCycles));
     return page;
 }
 
@@ -129,6 +130,11 @@ static void handleSave() {
         int v = _server.arg("wCycSec").toInt();
         if (v >= 1 && v <= 65535)
             s.winderCycleSec = (uint16_t)v;
+    }
+    if (_server.hasArg("wCyc")) {
+        int v = _server.arg("wCyc").toInt();
+        if (v >= 1 && v <= 10)
+            s.winderCycles = (uint8_t)v;
     }
 
     saveSettings(s);
@@ -224,7 +230,9 @@ static void handleApiStatus() {
     json += s.winderEnabled ? "true" : "false";
     json += ",\"cycleSec\":";    json += s.winderCycleSec;
     json += ",\"cycles\":";      json += winderCycleCount();
-    json += "}}";
+    json += ",\"cycles_per_dir\":"; json += s.winderCycles;
+    json += ",\"status\":\"";    json += winderStatus();
+    json += "\"}}";
 
     _server.send(200, "application/json", json);
 }

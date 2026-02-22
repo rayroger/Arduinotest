@@ -130,6 +130,7 @@ static void registerTasks() {
     AppSettings s;
     loadSettings(s);
     if (s.winderEnabled) {
+        winderSetCycles(s.winderCycles);
         _scheduler.addIntervalTask("Watch winder",
                                    (uint32_t)s.winderCycleSec * 1000UL,
                                    winderCycle);
