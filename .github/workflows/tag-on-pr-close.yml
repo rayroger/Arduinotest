@@ -1,0 +1,46 @@
+name: Tag on PR Merge
+
+# Creates an annotated git tag whenever a pull request is merged into any branch.
+# Tag name   : pr-<PR_NUMBER>   (e.g. pr-7)
+# Tag message: PR title (first line) followed by the PR body as the description.
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  tag:
+    name: Create annotated tag
+    # Only run when the PR was actually merged, not just closed/abandoned.
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write   # needed to push the tag
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch full history so the tag can be pushed to the merge commit.
+          fetch-depth: 0
+
+      - name: Create and push annotated tag
+        env:
+          TAG_NAME: pr-${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Build the tag message: title on line 1, then the PR body.
+          TAG_MESSAGE="${PR_TITLE}"
+          if [ -n "${PR_BODY}" ]; then
+            TAG_MESSAGE="${TAG_MESSAGE}"$'\n\n'"${PR_BODY}"
+          fi
+
+          git tag -a "${TAG_NAME}" "${MERGE_SHA}" -m "${TAG_MESSAGE}"
+          git push origin "${TAG_NAME}"
