@@ -126,3 +126,56 @@ Time synchronised successfully.
 ...
 ```
 
+---
+
+## SmartThings Ecosystem Integration
+
+The ESP32-S2 already exposes a local HTTP API (`/api/status`) and a web portal, which makes it straightforward to bridge into the [Samsung SmartThings](https://www.smartthings.com/) ecosystem. Three practical options are reviewed below, ordered from easiest to most capable.
+
+### Option 1 — SmartThings HTTP Device Handler (simplest)
+
+SmartThings can poll the device's `/api/status` JSON endpoint directly using a **SmartThings Edge driver** (Lua) or a legacy **Device Type Handler** (Groovy).
+
+| Pro | Con |
+|-----|-----|
+| No firmware changes needed | SmartThings hub must be on the same LAN as the ESP32 |
+| Read-only status (time, winder state) immediately available | Write/control requires adding a POST endpoint to the ESP32 |
+| Works today with the existing HTTP API | |
+
+**Minimal firmware change:** expose a `/control` POST endpoint (e.g. `wEn=1` / `wEn=0`) so SmartThings can start and stop the winder remotely.
+
+### Option 2 — MQTT Bridge (recommended)
+
+Add an MQTT client (`PubSubClient` library) to the ESP32 firmware. The device publishes status topics and subscribes to command topics. A SmartThings-compatible MQTT broker bridge (e.g. [SmartThings MQTT Bridge](https://github.com/stjohnjohnson/smartthings-mqtt-bridge)) or [Home Assistant](https://www.home-assistant.io/) acting as a relay can forward state changes to SmartThings.
+
+**Suggested topics:**
+
+| Direction | Topic | Payload |
+|-----------|-------|---------|
+| Publish   | `watchwinder/status` | `{"winder":"RUN_CW","cycles":42}` |
+| Subscribe | `watchwinder/command` | `ON` / `OFF` |
+
+**Required library:** `PubSubClient` (available via Arduino Library Manager — no core changes needed).
+
+### Option 3 — Matter over Wi-Fi (future-proof)
+
+The ESP32-S2 supports the [Matter](https://csa-iot.org/all-solutions/matter/) protocol via Espressif's [esp-matter SDK](https://github.com/espressif/esp-matter). SmartThings added native Matter support in 2023, so a Matter-enabled firmware would integrate with SmartThings **without any intermediary hub or bridge**.
+
+| Pro | Con |
+|-----|-----|
+| Native SmartThings support — no bridge | Requires migrating the build to the esp-matter SDK (PlatformIO recommended) |
+| Cross-ecosystem (Apple Home, Google Home, Amazon Alexa) | Significantly larger firmware footprint |
+| Local control with no cloud dependency | Initial commissioning requires a Matter-capable controller |
+
+**Recommended device type:** `OnOff` plug or `Generic Switch` — map the winder enable/disable to the on/off cluster.
+
+### Summary
+
+| Option | Effort | SmartThings support | Local control |
+|--------|--------|---------------------|---------------|
+| HTTP polling (Edge driver) | Low | ✅ | ✅ |
+| MQTT bridge | Medium | ✅ (via bridge) | ✅ |
+| Matter over Wi-Fi | High | ✅ (native) | ✅ |
+
+For most users **Option 1** (HTTP Edge driver) is the quickest path to visibility, while **Option 2** (MQTT) offers the best balance of control and ecosystem flexibility without a major firmware rewrite.
+
